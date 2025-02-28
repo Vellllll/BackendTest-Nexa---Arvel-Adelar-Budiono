@@ -1,11 +1,15 @@
 const mysql = require('mysql2');
+const dotenv = require('dotenv');
+
+dotenv.config()
 
 const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'dbnexa',
-    socketPath : '/tmp/mysql.sock',
+    host: process.env.DB_HOST,
+    user: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT
+    // socketPath : '/tmp/mysql.sock',
 });
 
 module.exports = pool;

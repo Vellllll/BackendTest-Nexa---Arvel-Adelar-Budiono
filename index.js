@@ -1,6 +1,5 @@
-const express = require('express')
-const app = express()
-const port = 3000
+const express = require('express');
+const app = express();
 const dotenv = require('dotenv');
 const pool = require('./database');
 const CryptoJS = require("crypto-js");
@@ -9,9 +8,31 @@ const jwt = require('jsonwebtoken');
 const moment = require('moment');
 const fs = require('fs');
 const multer = require('multer');
+const winston = require('winston');
+const { combine, timestamp, json, printf } = winston.format;
+const timestampFormat = 'MMM-DD-YYYY HH:mm:ss';
 
 const upload = multer({
     dest: './upload/',
+});
+
+const logger = winston.createLogger({
+    format: combine(
+        timestamp({ format: timestampFormat }),
+        json(),
+        printf(({ timestamp, level, message, ...data }) => {
+            const response = {
+                level,
+                timestamp,
+                message,
+                data,
+            };
+            return JSON.stringify(response);
+        })
+    ),
+    transports: [
+        new winston.transports.Console()
+    ],
 });
 
 dotenv.config();
@@ -19,11 +40,16 @@ dotenv.config();
 app.use(bodyParser.json());
 
 app.post('/api/login', (request, response) => {
+    const log_header = 'post_api_login';
+    logger.info(`${log_header}`, request.body);
+
     const { username, password } = request.body;
     if (username && password) {
         pool.query(`SELECT id, username, password FROM admin WHERE username = '${username}'`, (error, result) => {
             if (error == null) {
                 if (result.length > 0) {
+                    logger.info(`${log_header}: username and password are found`);
+
                     const decryptedPassword = CryptoJS.AES.decrypt(result[0].password.toString(), process.env.SECRET_KEY).toString(CryptoJS.enc.Utf8);
                     if (decryptedPassword == password) {
                         const currentDt = moment().format('YYYY-MM-DD HH:mm:ss');
@@ -36,30 +62,40 @@ app.post('/api/login', (request, response) => {
 
                         pool.query(`INSERT INTO admin_token (id_admin, token, expired_at) VALUES ('${result[0].id}', '${token}', '${tokenExpiredDt}')`, (error, result) => {
                             if (error == null) {
-                                response.json({
+                                logger.info(`${log_header}: login successful`);
+                                return response.status(200).json({
                                     'status': 'success',
                                     'status-code': 200,
                                     'result': token
                                 })
                             } else {
-                                response.json({
+                                logger.info(`${log_header}: login failed`);
+                                return response.status(500).json({
                                     'status': 'failed',
                                     'status-code': 500,
                                     'result': 'Database error when login'
                                 })
                             }
                         })
-
+                    } else {
+                        logger.info(`${log_header}: incorrect password`);
+                        return response.status(401).json({
+                            'status': 'failed',
+                            'status-code': 401,
+                            'result': 'Incorrect password'
+                        })
                     }
                 } else {
-                    response.json({
+                    logger.info(`${log_header}: user is not found`)
+                    return response.status(404).json({
                         'status': 'failed',
                         'status-code': 404,
-                        'result': 'User not found'
+                        'result': 'User is not found'
                     })
                 }
             } else {
-                response.json({
+                logger.info(`${log_header}: error when querying username and password in database`);
+                return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
                     'result': 'Database error when getting user'
@@ -67,7 +103,8 @@ app.post('/api/login', (request, response) => {
             }
         })
     } else {
-        response.json({
+        logger.info(`${log_header}: username and password are not found`);
+        return response.status(422).json({
             'status': 'failed',
             'status-code': 422,
             'result': 'Please input username and password'
@@ -76,11 +113,15 @@ app.post('/api/login', (request, response) => {
 })
 
 app.post('/api/register', (request, response) => {
+    const log_header = 'post_api_register';
+    logger.info(`${log_header}`, request.body);
+
     const { username, password, note } = request.body;
     if (username && password) {
         pool.query(`SELECT username FROM admin WHERE username = '${username}'`, (error, result) => {
             if (error) {
-                response.json({
+                logger.info(`${log_header}: error when getting existing user`)
+                return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
                     'result': 'Database error when getting user'
@@ -88,22 +129,26 @@ app.post('/api/register', (request, response) => {
             }
             
             if (result.length > 0) {
-                response.json({
+                logger.info(`${log_header}: username already exist`);
+                return response.status(403).json({
                     'status': 'failed',
                     'status-code': 403,
                     'result': 'Username already exist',
                 })
             } else {
+                logger.info(`${log_header}: registering user`);
                 const encryptedPassword = CryptoJS.AES.encrypt(password, process.env.SECRET_KEY).toString();
                 pool.query(`INSERT INTO admin (username, password, note) VALUES ('${username}', '${encryptedPassword}', '${note}')`, (error, result) => {
                     if (error == null) {
-                        response.json({
+                        logger.info(`${log_header}: registration successful`)
+                        return response.status(201).json({
                             'status': 'success',
                             'status-code': 201,
                             'result': 'User registered'
                         })
                     } else {
-                        response.json({
+                        logger.info(`${log_header}: error when registering user`)
+                        return response.status(500).json({
                             'status': 'failed',
                             'status-code': 500,
                             'result': 'Error when registering user'
@@ -113,7 +158,8 @@ app.post('/api/register', (request, response) => {
             }
         });
     } else {
-        response.json({
+        logger.info(`${log_header}: username and password are not found`);
+        return response.status(422).json({
             'status': 'failed',
             'status-code': 422,
             'result': 'Please input username and password'
@@ -122,50 +168,63 @@ app.post('/api/register', (request, response) => {
 })
 
 app.post('/api/staff', upload.single('photo'), (request, response) => {
+    const log_header = 'post_api_staff';
+    logger.info(`${log_header}`, request.body);
+
     const header = request.headers['authorization'];
     let { nip, nama, alamat, gender, tgl_lahir, status, id } = request.body;
     const tokenValidation = verifyToken(header);
 
     if (tokenValidation.verified) {
+        logger.info(`${log_header}: token valid`);
         if (nip && nama) {
             if (isValidNip(nip)) {
+                logger.info(`${log_header}: nip valid`);
                 if (isValidNotSpecial(nama)) {
+                    logger.info(`${log_header}: nama valid`)
                     pool.query('SELECT nip FROM karyawan WHERE nip = ?', [nip], (error, result) => {
                         if (error == null) {
                             if (result.length > 0) {
-                                response.status(403).json({
+                                logger.info(`${log_header}: nip already exist`);
+                                return response.status(403).json({
                                     'status': 'failed',
                                     'status-code': 403,
                                     'result': 'Nip already exist'
                                 })
                             } else {
+                                logger.info(`${log_header}: registering staff`)
                                 let base64Photo = null;
                                 if (request.file) {
+                                    logger.info(`${log_header}: converting photo to base64`);
                                     base64Photo = new Buffer(fs.readFileSync(request.file.path)).toString("base64");
                                 }
 
                                 if (status == null) {
+                                    logger.info(`${log_header}: set staff status to 1`);
                                     status = 1;
                                 }
     
                                 pool.query('INSERT INTO karyawan (nip, nama, alamat, gender, photo, tgl_lahir, status, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [nip, nama, alamat, gender, base64Photo, tgl_lahir, status, id] , (error, result) => {
                                     if (error == null) {
-                                        response.json({
+                                        logger.info(`${log_header}: staff registered`);
+                                        return response.status(201).json({
                                             'status': 'success',
                                             'status-code': 201,
                                             'result': 'Staff registered'
-                                        })
+                                        });
                                     } else {
-                                        response.json({
+                                        logger.info(`${log_header}: error when registering staff`);
+                                        return response.status(500).json({
                                             'status': 'failed',
                                             'status-code': 500,
                                             'result': 'Error when registering staff'
-                                        })
+                                        });
                                     }
                                 })
                             }
                         } else {
-                            response.status(500).json({
+                            logger.info(`${log_header}: error when registering staff`);
+                            return response.status(500).json({
                                 'status': 'failed',
                                 'status-code': 500,
                                 'result': 'Error when registering staff'
@@ -173,21 +232,24 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
                         }
                     })
                 } else {
-                    response.status(403).json({
+                    logger.info(`${log_header}: nama can not include special character`);
+                    return response.status(403).json({
                         'status': 'failed',
                         'status-code': 403,
                         'result': 'Nama can not include special character'
                     })
                 }
             } else {
-                response.json({
+                logger.info(`${log_header}: nip invalid`)
+                return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
                     'result': 'Nip is not valid'
                 })
             }
         } else {
-            response.json({
+            logger.info(`${log_header}: nip and nama are not found`)
+            return response.status(422).json({
                 'status': 'failed',
                 'status-code': 422,
                 'result': 'Field nip and nama are required'
@@ -195,7 +257,8 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
         }
 
     } else {
-        response.json({
+        logger.info(`${log_header}: token invalid`);
+        return response.status(401).json({
             'status': 'failed',
             'status-code': 401,
             'result': 'Unauthorized'
@@ -204,41 +267,52 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
 })
 
 app.get('/api/staff', (request, response) => {
+    const log_header = 'get_api_staff';
+    logger.info(`${log_header}`, request.query);
+
     const header = request.headers['authorization'];
     const { keyword, start, count } = request.query;
     const tokenValidation = verifyToken(header);
 
     if (tokenValidation.verified) {
+        logger.info(`${log_header}: token valid`)
+
         let whereQuery = '';
         if (keyword) {
+            logger.info(`${log_header}: filtering nama by keyword`)
             if (isValidNotSpecial(keyword)) {
                 whereQuery = `WHERE nama LIKE '%${keyword}%' `;
             } else {
+                logger.info(`${log_header}: keyword can not include specila character`);
                 return response.status(403).json({
                     'status': 'failed',
                     'status-code': 403,
-                    'result': 'Nama can not include special character'
+                    'result': 'Keyword can not include special character'
                 })
             }
         }
 
         if (count) {
+            logger.info(`${log_header}: set the data count`);
             whereQuery = whereQuery + `LIMIT ${count} `;
         }
 
         if (start) {
+            logger.info(`${log_header}: set the offset data`);
             whereQuery = whereQuery + `OFFSET ${start} `;
         }
 
         pool.query(`SELECT * FROM karyawan ${whereQuery} ORDER BY nip ASC`, (error, result) => {
             if (error == null) {
-                response.status(200).json({
+                logger.info(`${log_header}: returning staff list`);
+                return response.status(200).json({
                     'status': 'success',
                     'status-code': 200,
                     'result': result
                 })
             } else {
-                response.status(500).json({
+                logger.info(`${log_header}: error when getting staff list`);
+                return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
                     'result': 'Error when getting staff list'
@@ -246,7 +320,8 @@ app.get('/api/staff', (request, response) => {
             }
         })
     } else {
-        response.status(401).json({
+        logger.info(`${log_header}: token invalid`);
+        return response.status(401).json({
             'status': 'failed',
             'status-code': 401,
             'result': 'Unauthorized'
@@ -255,16 +330,23 @@ app.get('/api/staff', (request, response) => {
 })
 
 app.put('/api/staff/:nip', (request, response) => {
+    const log_header = 'put_api_staff';
+    logger.info(`${log_header}`, request.body);
+
     const header = request.headers['authorization'];
     const tokenValidation = verifyToken(header);
     const nip = request.params['nip'];
 
     if (tokenValidation.verified) {
+        logger.info(`${log_header}: token valid`);
         if (nip) {
             if (Object.keys(request.body).length > 0) {
+                logger.info(`${log_header}: body field is exist`);
+
                 let tableColumns = [];
                 pool.query('SHOW COLUMNS FROM karyawan', (error, result) => {
                     if (error == null) {
+                        logger.info(`${log_header}: editing staff data`);
                         result.forEach(column => {
                             tableColumns.push(column['Field'])
                         })
@@ -274,7 +356,7 @@ app.put('/api/staff/:nip', (request, response) => {
                         for (let param in request.body) {
                             if (tableColumns.includes(param)) {
                                 if (!isValidNotSpecial(request.body[param])) {
-                                    console.log(param)
+                                    logger.info(`${log_header}: ${param} can not include special character`);
                                     return response.status(403).json({
                                         'status': 'failed',
                                         'status-code': 403,
@@ -307,12 +389,14 @@ app.put('/api/staff/:nip', (request, response) => {
             
                         pool.query(`UPDATE karyawan ${updateQuery} WHERE nip = ?`, [nip], (error, result) => {
                             if (error == null) {
+                                logger.info(`${log_header}: staff updated`);
                                 return response.status(200).json({
                                     'status': 'success',
                                     'status-code': 200,
                                     'result': 'Staff updated'
                                 })
                             } else {
+                                logger.info(`${log_header}: error when updating staff`);
                                 return response.status(500).json({
                                     'status': 'failed',
                                     'status-code': 500,
@@ -321,14 +405,16 @@ app.put('/api/staff/:nip', (request, response) => {
                             }
                         })
                     } else {
+                        logger.info(`${log_header}: error when getting database column`);
                         return response.status(500).json({
                             'status': 'failed',
                             'status-code': 500,
-                            'result': 'Error when getting databse columns'
+                            'result': 'Error when getting database columns'
                         })
                     }
                 })
             } else {
+                logger.info(`${log_header}: body field is empty`);
                 return response.status(422).json({
                     'status': 'failed',
                     'status-code': 422,
@@ -336,6 +422,7 @@ app.put('/api/staff/:nip', (request, response) => {
                 })
             }
         } else {
+            logger.info(`${log_header}: nip parameter is required`);
             return response.status(422).json({
                 'status': 'failed',
                 'status-code': 422,
@@ -343,6 +430,7 @@ app.put('/api/staff/:nip', (request, response) => {
             })
         }
     } else {
+        logger.info(`${log_header}: token invalid`);
         return response.status(401).json({
             'status': 'failed',
             'status-code': 401,
@@ -352,15 +440,21 @@ app.put('/api/staff/:nip', (request, response) => {
 })
 
 app.put('/api/staff/:nip/deactivate', (request, response) => {
+    const log_header = 'put_api_staff_deactivate';
+    logger.info(`${log_header}`);
+
     const header = request.headers['authorization'];
     const tokenValidation = verifyToken(header);
     const nip = request.params['nip'];
 
     if (tokenValidation.verified) {
+        logger.info(`${log_header}: token valid`);
         if (isValidNip(nip)) {
+            logger.info(`${log_header}: nip valid`);
             pool.query('SELECT nip FROM karyawan WHERE nip = ?', [nip], (error, result) => {
                 if (error == null) {
                     if (result.length == 0) {
+                        logger.info(`${log_header}: staff with nip ${nip} is not found`);
                         return response.status(404).json({
                             'status': 'failed',
                             'status-code': 404,
@@ -369,12 +463,14 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
                     }
                     pool.query('UPDATE karyawan SET status = 9 WHERE nip = ?', [nip], (error, result) => {
                         if (error == null) {
+                            logger.info(`${log_header}: staff deactivate`);
                             return response.status(200).json({
                                 'status': 'success',
                                 'status-code': 200,
                                 'result': 'Staff deactivate'
                             })
                         } else {
+                            logger.info(`${log_header}: error when deactivating staff`);
                             return response.status(500).json({
                                 'status': 'failed',
                                 'status-code': 500,
@@ -383,6 +479,7 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
                         }
                     })
                 } else {
+                    logger.info(`${log_header}: error when getting staff`);
                     return response.status(500).json({
                         'status': 'failed',
                         'status-code': 500,
@@ -391,6 +488,7 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
                 }
             })
         } else {
+            logger.info(`${log_header}: nip invalid`);
             return response.status(403).json({
                 'status': 'failed',
                 'status-code': 403,
@@ -398,6 +496,7 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
             })
         }
     } else {
+        logger.info(`${log_header}: unauthorized`);
         return response.status(401).json({
             'status': 'failed',
             'status-code': 401,
@@ -446,6 +545,6 @@ const verifyToken = header => {
     }
 }
 
-app.listen(port, () => {
-  console.log(`App listening on port ${port}`)
+app.listen(process.env.APP_PORT, () => {
+  console.log(`Listening on port ${process.env.APP_PORT}`)
 })
