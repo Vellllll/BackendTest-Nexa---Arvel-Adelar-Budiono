@@ -69,7 +69,7 @@ app.post('/api/login', (request, response) => {
                                     'result': token
                                 })
                             } else {
-                                logger.info(`${log_header}: login failed`);
+                                logger.error(`${log_header}: login failed`, error);
                                 return response.status(500).json({
                                     'status': 'failed',
                                     'status-code': 500,
@@ -94,7 +94,7 @@ app.post('/api/login', (request, response) => {
                     })
                 }
             } else {
-                logger.info(`${log_header}: error when querying username and password in database`);
+                logger.error(`${log_header}: error when querying username and password in database`, error);
                 return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
@@ -147,7 +147,7 @@ app.post('/api/register', (request, response) => {
                             'result': 'User registered'
                         })
                     } else {
-                        logger.info(`${log_header}: error when registering user`)
+                        logger.error(`${log_header}: error when registering user`, error)
                         return response.status(500).json({
                             'status': 'failed',
                             'status-code': 500,
@@ -172,7 +172,7 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
     logger.info(`${log_header}`, request.body);
 
     const header = request.headers['authorization'];
-    let { nip, nama, alamat, gender, tgl_lahir, status, id } = request.body;
+    let { nip, nama, alamat, gend, tgl_lahir, status, id } = request.body;
     const tokenValidation = verifyToken(header);
 
     if (tokenValidation.verified) {
@@ -196,7 +196,7 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
                                 let base64Photo = null;
                                 if (request.file) {
                                     logger.info(`${log_header}: converting photo to base64`);
-                                    base64Photo = new Buffer(fs.readFileSync(request.file.path)).toString("base64");
+                                    base64Photo = `data:${request.file.mimetype};base64,${new Buffer(fs.readFileSync(request.file.path)).toString("base64")}`;
                                 }
 
                                 if (status == null) {
@@ -204,7 +204,7 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
                                     status = 1;
                                 }
     
-                                pool.query('INSERT INTO karyawan (nip, nama, alamat, gender, photo, tgl_lahir, status, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [nip, nama, alamat, gender, base64Photo, tgl_lahir, status, id] , (error, result) => {
+                                pool.query('INSERT INTO karyawan (nip, nama, alamat, gend, photo, tgl_lahir, status, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [nip, nama, alamat, gend, base64Photo, tgl_lahir, status, id] , (error, result) => {
                                     if (error == null) {
                                         logger.info(`${log_header}: staff registered`);
                                         return response.status(201).json({
@@ -213,7 +213,7 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
                                             'result': 'Staff registered'
                                         });
                                     } else {
-                                        logger.info(`${log_header}: error when registering staff`);
+                                        logger.error(`${log_header}: error when registering staff`, error);
                                         return response.status(500).json({
                                             'status': 'failed',
                                             'status-code': 500,
@@ -223,7 +223,7 @@ app.post('/api/staff', upload.single('photo'), (request, response) => {
                                 })
                             }
                         } else {
-                            logger.info(`${log_header}: error when registering staff`);
+                            logger.error(`${log_header}: error when registering staff`, error);
                             return response.status(500).json({
                                 'status': 'failed',
                                 'status-code': 500,
@@ -281,7 +281,7 @@ app.get('/api/staff', (request, response) => {
         if (keyword) {
             logger.info(`${log_header}: filtering nama by keyword`)
             if (isValidNotSpecial(keyword)) {
-                whereQuery = `WHERE nama LIKE '%${keyword}%' `;
+                whereQuery = ` WHERE nama LIKE '%${keyword}%' `;
             } else {
                 logger.info(`${log_header}: keyword can not include specila character`);
                 return response.status(403).json({
@@ -292,17 +292,18 @@ app.get('/api/staff', (request, response) => {
             }
         }
 
+        let limitQuery = '';
         if (count) {
             logger.info(`${log_header}: set the data count`);
-            whereQuery = whereQuery + `LIMIT ${count} `;
+            limitQuery = limitQuery + `LIMIT ${count} `;
         }
 
         if (start) {
             logger.info(`${log_header}: set the offset data`);
-            whereQuery = whereQuery + `OFFSET ${start} `;
+            limitQuery = limitQuery + `OFFSET ${start} `;
         }
 
-        pool.query(`SELECT * FROM karyawan ${whereQuery} ORDER BY nip ASC`, (error, result) => {
+        pool.query(`SELECT * FROM karyawan ${whereQuery} ORDER BY nip ASC ${limitQuery}`, (error, result) => {
             if (error == null) {
                 logger.info(`${log_header}: returning staff list`);
                 return response.status(200).json({
@@ -311,7 +312,7 @@ app.get('/api/staff', (request, response) => {
                     'result': result
                 })
             } else {
-                logger.info(`${log_header}: error when getting staff list`);
+                logger.error(`${log_header}: error when getting staff list`, error);
                 return response.status(500).json({
                     'status': 'failed',
                     'status-code': 500,
@@ -383,6 +384,12 @@ app.put('/api/staff/:nip', (request, response) => {
                                         updateQuery = updateQuery + ` ${param} = '${request.body[param]}'`;
                                     }
                                 }
+                            } else {
+                                return response.status(403).json({
+                                    'status': 'failed',
+                                    'status-code': 403,
+                                    'result': `${param} field is not in database column`
+                                })
                             }
                             counter++;
                         }
@@ -396,7 +403,7 @@ app.put('/api/staff/:nip', (request, response) => {
                                     'result': 'Staff updated'
                                 })
                             } else {
-                                logger.info(`${log_header}: error when updating staff`);
+                                logger.error(`${log_header}: error when updating staff`, error);
                                 return response.status(500).json({
                                     'status': 'failed',
                                     'status-code': 500,
@@ -405,7 +412,7 @@ app.put('/api/staff/:nip', (request, response) => {
                             }
                         })
                     } else {
-                        logger.info(`${log_header}: error when getting database column`);
+                        logger.error(`${log_header}: error when getting database column`, error);
                         return response.status(500).json({
                             'status': 'failed',
                             'status-code': 500,
@@ -470,7 +477,7 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
                                 'result': 'Staff deactivate'
                             })
                         } else {
-                            logger.info(`${log_header}: error when deactivating staff`);
+                            logger.error(`${log_header}: error when deactivating staff`, error);
                             return response.status(500).json({
                                 'status': 'failed',
                                 'status-code': 500,
@@ -479,7 +486,7 @@ app.put('/api/staff/:nip/deactivate', (request, response) => {
                         }
                     })
                 } else {
-                    logger.info(`${log_header}: error when getting staff`);
+                    logger.error(`${log_header}: error when getting staff`, error);
                     return response.status(500).json({
                         'status': 'failed',
                         'status-code': 500,
